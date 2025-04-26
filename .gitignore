@@ -1,3 +1,5 @@
-TrainedModels
-Test
-Train
+TrainedModels/srcnn/X3/old
+Datasets
+Results
+__pycache__
+SrcnnLayers
