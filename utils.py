@@ -10,6 +10,8 @@ import numpy as np
 from PIL import Image, ImageDraw
 import matplotlib.pyplot as plt
 
+import skimage.color as sc
+
 def modcrop(image, scale):
     width, height = image.size
 
@@ -119,7 +121,7 @@ def prep_showcase(model, lr_tensor, gt_tensor, scale, chop_size=60000):
 
     return [gt_img, bic_img, hr_img]
 
-def get_avg_metrics(model, dataset, scale, chop_size=60000):
+def get_avg_metrics(model, dataset, scale, chop_size=60000, rgb=False):
     psnr_sum_up = 0
     ssim_sum_up = 0
     psnr_sum_bic = 0
@@ -136,10 +138,14 @@ def get_avg_metrics(model, dataset, scale, chop_size=60000):
 
         hr_img.save(results_path + "/" + img_names[i])
 
-        psnr_sum_bic += compute_psnr(np.array(gt_img), np.array(bic_img))
-        psnr_sum_up += compute_psnr(np.array(gt_img), np.array(hr_img))
-        ssim_sum_bic += compute_ssim(np.array(gt_img), np.array(bic_img), channel_axis=2)
-        ssim_sum_up += compute_ssim(np.array(gt_img), np.array(hr_img), channel_axis=2)
+        psnr_bic, ssim_bic = get_metrics(gt_img, bic_img, rgb)
+        psnr_up, ssim_up = get_metrics(gt_img, hr_img, rgb)
+
+        psnr_sum_bic += psnr_bic
+        psnr_sum_up += psnr_up
+        ssim_sum_bic += ssim_bic
+        ssim_sum_up += ssim_up
+
     
     print(f"Upscaled images saved to {results_path}")
 
@@ -167,22 +173,20 @@ def easy_crop(img, relative_pos=(50, 50), crop_size=64):
 
     return img.crop((left, upper, right, lower))
 
-def show_comparison_picture(model, dataset, img_id, relative_crop_pos=(50, 50), crop_size=64, scale=3, other_model=True):
+def show_comparison_picture(model, dataset, img_id, relative_crop_pos=(50, 50), crop_size=64, scale=3, other_model=True, rgb=False):
     lr_tensor, gt_tensor = dataset[img_id]
 
     showcase_images = [gt_img, bic_img, hr_img] = prep_showcase(model, lr_tensor, gt_tensor, scale)
 
-    psnr_bic = compute_psnr(np.array(gt_img), np.array(bic_img))
-    psnr_up = compute_psnr(np.array(gt_img), np.array(hr_img))
-    ssim_bic = compute_ssim(np.array(gt_img), np.array(bic_img), channel_axis=2)
-    ssim_up = compute_ssim(np.array(gt_img), np.array(hr_img), channel_axis=2)
+    psnr_bic, ssim_bic = get_metrics(gt_img, bic_img, rgb)
+    psnr_up, ssim_up = get_metrics(gt_img, hr_img, rgb)
+
     if other_model:
         other_model = "SRCNN" if model.get_name() == "ESRT" else "ESRT"
         other_model_img = Image.open(get_paths(f"./Results/{dataset.get_name()}/{other_model}/X{str(scale)}")[img_id]).convert("RGB")
         showcase_images.insert(2, other_model_img)
 
-        psnr_other_model = compute_psnr(np.array(gt_img), np.array(other_model_img))
-        ssim_other_model = compute_ssim(np.array(gt_img), np.array(other_model_img), channel_axis=2)
+        psnr_other_model, ssim_other_model = get_metrics(gt_img, other_model_img, rgb)
 
     showcase_images.append(easy_crop(gt_img, relative_crop_pos, crop_size))
     showcase_images.append(easy_crop(bic_img, relative_crop_pos, crop_size))
@@ -201,7 +205,22 @@ def show_comparison_picture(model, dataset, img_id, relative_crop_pos=(50, 50), 
 
     show_images(showcase_images, labels)
 
-def metrics_from_results(gt_path, up_path):
+def get_metrics(gt_img, up_img, rgb=False):
+    w,h = up_img.size
+    gt_img = gt_img.crop((0,0,w,h))
+
+    if rgb:
+        gt_img = np.array(gt_img, np.uint8)
+        up_img = np.array(up_img, np.uint8)
+    else:
+        gt_img = sc.rgb2ycbcr(gt_img)[:,:,0].clip(0, 255).round().astype(np.uint8)
+        up_img = sc.rgb2ycbcr(up_img)[:,:,0].clip(0, 255).round().astype(np.uint8)
+
+    psnr = compute_psnr(gt_img, up_img)
+    ssim = compute_ssim(gt_img, up_img, gaussian_weights=True, multichannel=rgb, channel_axis=2 if rgb else None)
+    return psnr, ssim
+
+def metrics_from_results(gt_path, up_path, rgb=False):
     gt_paths = get_paths(gt_path)
     up_paths = get_paths(up_path)
 
@@ -218,12 +237,10 @@ def metrics_from_results(gt_path, up_path):
     for up_path, gt_path in zip(up_paths, gt_paths):
         gt_img = Image.open(gt_path).convert('RGB')
         up_img = Image.open(up_path).convert('RGB')
-        
-        w,h = up_img.size
-        gt_img = gt_img.crop((0,0,w,h))
 
-        avg_psnr += compute_psnr(np.array(gt_img).transpose(2,0,1), np.array(up_img).transpose(2,0,1))
-        avg_ssim += compute_ssim(np.array(gt_img).transpose(2,0,1), np.array(up_img).transpose(2,0,1), channel_axis=0)
+        psnr, ssim = get_metrics(gt_img, up_img, rgb)
+        avg_psnr += psnr
+        avg_ssim += ssim
 
     avg_psnr /= len(gt_paths)
     avg_ssim /= len(gt_paths)
@@ -231,7 +248,7 @@ def metrics_from_results(gt_path, up_path):
     print("Average PSNR: ", avg_psnr)
     print("Average SSIM: ", avg_ssim)
 
-def eval(model, eval_dataloader, device, scale=-1):
+def eval(model, eval_dataloader, device, scale=-1, rgb=False):
     model.eval()
     psnr_sum = 0
     ssim_sum = 0
@@ -243,13 +260,11 @@ def eval(model, eval_dataloader, device, scale=-1):
             else:
                 res = model.chunks_forward(lr_tensor, scale)
 
-            hr_np = np.array(tensor_to_image(res.detach()[0].cpu()))
-            gt_np = np.array(tensor_to_image(hr_tensor.squeeze(0)))
+            hr_img = tensor_to_image(res.detach()[0].cpu())
+            gt_img = tensor_to_image(hr_tensor.squeeze(0))
 
-            gt_np = gt_np[:hr_np.shape[0], :hr_np.shape[1], :hr_np.shape[2],]
+            psnr, ssim = get_metrics(gt_img, hr_img, rgb)
 
-            psnr = compute_psnr(hr_np, gt_np)
-            ssim = compute_ssim(hr_np, gt_np, channel_axis=2)
             psnr_sum += psnr
             ssim_sum += ssim
     
