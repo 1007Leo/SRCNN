@@ -149,7 +149,10 @@ def get_avg_metrics(model, dataset, scale, chop_size=60000, rgb=False):
     
     print(f"Upscaled images saved to {results_path}")
 
-    return psnr_sum_bic/len(dataset), ssim_sum_bic/len(dataset), psnr_sum_up/len(dataset), ssim_sum_up/len(dataset)
+    return round(psnr_sum_bic/len(dataset), 2), \
+           round(ssim_sum_bic/len(dataset), 4), \
+           round(psnr_sum_up/len(dataset), 2), \
+           round(ssim_sum_up/len(dataset), 4)
 
 def easy_crop(img, relative_pos=(50, 50), crop_size=64):
     w_percent = max(min(100, relative_pos[0]), 0) / 100
@@ -173,7 +176,7 @@ def easy_crop(img, relative_pos=(50, 50), crop_size=64):
 
     return img.crop((left, upper, right, lower))
 
-def show_comparison_picture(model, dataset, img_id, relative_crop_pos=(50, 50), crop_size=64, scale=3, other_model=True, rgb=False):
+def show_comparison_picture(model, dataset, img_id, relative_crop_pos=(50, 50), crop_size=64, scale=3, other_model="", rgb=False):
     lr_tensor, gt_tensor = dataset[img_id]
 
     showcase_images = [gt_img, bic_img, hr_img] = prep_showcase(model, lr_tensor, gt_tensor, scale)
@@ -181,8 +184,7 @@ def show_comparison_picture(model, dataset, img_id, relative_crop_pos=(50, 50), 
     psnr_bic, ssim_bic = get_metrics(gt_img, bic_img, rgb)
     psnr_up, ssim_up = get_metrics(gt_img, hr_img, rgb)
 
-    if other_model:
-        other_model = "SRCNN" if model.get_name() == "ESRT" else "ESRT"
+    if other_model != "":
         other_model_img = Image.open(get_paths(f"./Results/{dataset.get_name()}/{other_model}/X{str(scale)}")[img_id]).convert("RGB")
         showcase_images.insert(2, other_model_img)
 
@@ -245,8 +247,8 @@ def metrics_from_results(gt_path, up_path, rgb=False):
     avg_psnr /= len(gt_paths)
     avg_ssim /= len(gt_paths)
 
-    print("Average PSNR: ", avg_psnr)
-    print("Average SSIM: ", avg_ssim)
+    print("Average PSNR: ", round(avg_psnr, 2))
+    print("Average SSIM: ", round(avg_ssim, 4))
 
 def eval(model, eval_dataloader, device, scale=-1, rgb=False):
     model.eval()
